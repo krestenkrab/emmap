@@ -9,6 +9,16 @@
 
 -include_lib("kernel/include/file.hrl").
 
+-type open_option() ::
+    read | write
+  | direct
+  | lock | nolock
+  | private | shared
+  | nocache
+  .
+
+-type mmap_file() :: #file_descriptor{}.
+
 init() ->
     case code:priv_dir(emmap) of
         {error, bad_name} ->
@@ -27,16 +37,21 @@ init() ->
 -spec open(File::string(),
           Offset::pos_integer(),
           Length::pos_integer(),
-          Options::[ read|write|direct|nocache|private|shared ]) ->
-                 {ok, term()} | {error, term()}.
-
+          Options::[ open_option() ]) ->
+                 {ok, mmap_file()} | {error, term()}.
 
 open(FileName, Off, Len, Options) ->
-    {ok, Mem} = open_nif(FileName, Off, Len, Options),
-    {ok, #file_descriptor{ module=?MODULE, data=Mem }}.
+    case open_nif(FileName, Off, Len, Options) of
+        {ok, Mem} ->
+            {ok, #file_descriptor{ module=?MODULE, data=Mem }};
+        Error ->
+            Error
+    end.
 
 open_nif(_,_,_,_) ->
      {ok, <<>>}.
+
+-spec close(File::mmap_file()) -> ok.
 
 close(#file_descriptor{ module=?MODULE, data=Mem }) ->
     close_nif(Mem).
@@ -44,11 +59,17 @@ close(#file_descriptor{ module=?MODULE, data=Mem }) ->
 close_nif(_) ->
     ok.
 
+-spec pread(File::mmap_file(), Offset::pos_integer(), Length::pos_integer()) ->
+                   {ok, binary()} | {error, term()} | eof.
+
 pread(#file_descriptor{ module=?MODULE, data=Mem }, Off, Len) ->
     pread_nif(Mem, Off, Len).
 
 pread_nif(_,_,_) ->
     {ok, <<>>}.
+
+-spec read(File::mmap_file(), Length::pos_integer()) ->
+                   {ok, binary()} | {error, term()} | eof.
 
 read(#file_descriptor{ module=?MODULE, data=Mem }, Len) ->
     read_nif(Mem, Len).
@@ -57,12 +78,18 @@ read_nif(_,_) ->
     {ok, <<>>}.
 
 
+-spec pwrite(File::mmap_file(), Position::pos_integer(), Data::binary()) ->
+                    ok | {error, term()}.
+
 pwrite(#file_descriptor{ module=?MODULE, data=Mem }, Off, Data) ->
     pwrite_nif(Mem, Off, Data).
 
 pwrite_nif(_,_,_) ->
     ok.
 
+-spec position(File::mmap_file(),
+               Position::pos_integer() | {bof|cur|eof, Position::integer()} ) ->
+                    {ok, pos_integer()} | {error, term()}.
 position(#file_descriptor{ module=?MODULE, data=Mem}, At)
   when is_integer(At) ->
     position_nif(Mem, bof, At);
@@ -71,7 +98,7 @@ position(#file_descriptor{ module=?MODULE, data=Mem}, {From, Off})
     position_nif(Mem, From, Off).
 
 position_nif(_,_From,_Off) ->
-    ok.
+    {ok, 0}.
 
 
 -ifdef(TEST).
@@ -82,7 +109,7 @@ simple_test() ->
     ok = file:close(File),
 
     %% with direct+shared, the contents of a binary may change
-    {ok, MFile} = emmap:open("test.data", 0, 4, [direct, shared]),
+    {ok, MFile} = emmap:open("test.data", 0, 4, [direct, shared, nolock]),
     {ok, Mem} = file:pread(MFile, 2, 2),
     <<"cd">> = Mem,
     {error, eacces} = file:pwrite(MFile, 2, <<"xx">>),
