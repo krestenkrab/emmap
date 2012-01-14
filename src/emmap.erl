@@ -1,6 +1,6 @@
 -module(emmap).
 
--export([open/4, close/1, pread/3, pwrite/3]).
+-export([open/4, close/1, pread/3, pwrite/3, read/2, position/2]).
 -on_load(init/0).
 
 -ifdef(TEST).
@@ -50,12 +50,28 @@ pread(#file_descriptor{ module=?MODULE, data=Mem }, Off, Len) ->
 pread_nif(_,_,_) ->
     {ok, <<>>}.
 
+read(#file_descriptor{ module=?MODULE, data=Mem }, Len) ->
+    read_nif(Mem, Len).
+
+read_nif(_,_) ->
+    {ok, <<>>}.
+
+
 pwrite(#file_descriptor{ module=?MODULE, data=Mem }, Off, Data) ->
     pwrite_nif(Mem, Off, Data).
 
 pwrite_nif(_,_,_) ->
     ok.
 
+position(#file_descriptor{ module=?MODULE, data=Mem}, At)
+  when is_integer(At) ->
+    position_nif(Mem, bof, At);
+position(#file_descriptor{ module=?MODULE, data=Mem}, {From, Off})
+  when From == 'bof'; From == 'cur'; From == 'eof' ->
+    position_nif(Mem, From, Off).
+
+position_nif(_,_From,_Off) ->
+    ok.
 
 
 -ifdef(TEST).
@@ -77,6 +93,10 @@ simple_test() ->
 
     %% Woot!
     <<"xx">> = Mem,
+
+    {ok, 0} = file:position(MFile, {cur, 0}),
+    {ok, <<"ab">>} = file:read(MFile, 2),
+    {ok, <<"xx">>} = file:read(MFile, 2),
 
     file:close(MFile),
     file:close(MFile2) .

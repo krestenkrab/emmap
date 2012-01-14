@@ -11,6 +11,7 @@ static ErlNifResourceType* MMAP_RESOURCE;
 
 typedef struct
 {
+  size_t position;
   int direct;
   int prot;
   bool closed;
@@ -59,10 +60,16 @@ static ERL_NIF_TERM ATOM_FILE;
 static ERL_NIF_TERM ATOM_FIXED;
 static ERL_NIF_TERM ATOM_NOCACHE;
 
+static ERL_NIF_TERM ATOM_BOF;
+static ERL_NIF_TERM ATOM_CUR;
+static ERL_NIF_TERM ATOM_EOF;
+
 static ERL_NIF_TERM emmap_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM emmap_read(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM emmap_close(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM emmap_pread(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM emmap_pwrite(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM emmap_position(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 extern "C" {
 
@@ -72,6 +79,8 @@ extern "C" {
         {"close_nif",             1, emmap_close},
         {"pread_nif",             3, emmap_pread},
         {"pwrite_nif",            3, emmap_pwrite},
+        {"position_nif",          3, emmap_position},
+        {"read_nif",              2, emmap_read},
     };
 
     ERL_NIF_INIT(emmap, nif_funcs, &on_load, NULL, NULL, NULL);
@@ -97,6 +106,10 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_FILE = enif_make_atom(env, "file");
     ATOM_FIXED = enif_make_atom(env, "fixed");
     ATOM_NOCACHE = enif_make_atom(env, "nocache");
+
+    ATOM_BOF = enif_make_atom(env, "bof");
+    ATOM_CUR = enif_make_atom(env, "cur");
+    ATOM_EOF = enif_make_atom(env, "eof");
 
     return 0;
 }
@@ -232,6 +245,7 @@ static ERL_NIF_TERM emmap_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
     handle->len = len;
     handle->closed = false;
     handle->direct = direct;
+    handle->position = 0;
 
     ERL_NIF_TERM resource = enif_make_resource(env, handle);
     enif_release_resource_compat(env, handle);
@@ -347,6 +361,91 @@ static ERL_NIF_TERM emmap_pwrite(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
       }
 
       return ATOM_OK;
+    }
+  else
+    {
+      return enif_make_badarg(env);
+    }
+}
+
+static ERL_NIF_TERM emmap_read(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  mhandle *handle;
+  unsigned long bytes;
+
+  if (enif_get_resource(env, argv[0], MMAP_RESOURCE, (void**)&handle)
+      && enif_get_ulong(env, argv[1], &bytes)) {
+
+
+      enif_rwlock_rwlock(handle->rwlock);
+
+      if (handle->position == handle->len) {
+        enif_rwlock_rwunlock(handle->rwlock);
+        return ATOM_EOF;
+      }
+
+      unsigned long new_pos = handle->position + bytes;
+      if (new_pos > handle->len) { new_pos = handle->len; }
+      long size = new_pos - handle->position;
+      long start = handle->position;
+      handle->position = new_pos;
+      enif_rwlock_rwunlock(handle->rwlock);
+
+      if (handle->direct) {
+
+        ERL_NIF_TERM res = enif_make_resource_binary
+          (env, handle, (void*) (((char*)handle->mem) + start), size);
+
+        return enif_make_tuple2(env, ATOM_OK, res);
+
+      } else {
+
+        ErlNifBinary bin;
+        // When it is non-direct, we have to allocate the binary
+        if (!enif_alloc_binary((size_t) size, &bin)) {
+          return make_error_tuple(env, ENOMEM);
+        }
+
+        memcpy(bin.data, (void*) (((char*)handle->mem) + start), size);
+
+        ERL_NIF_TERM res = enif_make_binary(env, &bin);
+        return enif_make_tuple2(env, ATOM_OK, res);
+      }
+
+  } else {
+    return enif_make_badarg(env);
+  }
+}
+
+static ERL_NIF_TERM emmap_position(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  mhandle *handle;
+  long position;
+  long relpos;
+  if (argc==3
+      && enif_get_resource(env, argv[0], MMAP_RESOURCE, (void**)&handle)
+      && enif_get_long(env, argv[2], &relpos)
+      && (argv[1] == ATOM_CUR || argv[1] == ATOM_BOF || argv[1] == ATOM_EOF))
+    {
+      enif_rwlock_rwlock(handle->rwlock);
+
+      if (argv[1] == ATOM_BOF) {
+        position = 0L + relpos;
+      } else if (argv[1] == ATOM_CUR) {
+        position = handle->position + relpos;
+      } else if (argv[1] == ATOM_EOF) {
+        position = handle->len - relpos;
+      }
+
+      if (position < 0L || ((unsigned long)position) > handle->len) {
+        enif_rwlock_rwunlock(handle->rwlock);
+        return enif_make_badarg(env);
+      }
+
+      handle->position = position;
+      enif_rwlock_rwunlock(handle->rwlock);
+
+      return enif_make_tuple2(env, ATOM_OK, enif_make_ulong(env, position));
     }
   else
     {
