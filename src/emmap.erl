@@ -24,22 +24,36 @@ init() ->
     erlang:load_nif(SoName, 0).
 
 
-close(_Ref) ->
-    ok.
-
 -spec open(File::string(),
           Offset::pos_integer(),
           Length::pos_integer(),
           Options::[ read|write|direct|nocache|private|shared ]) ->
                  {ok, term()} | {error, term()}.
 
-open(_FileName,_Off,_Len,_Options) ->
-    <<>>.
 
-pread(_File,_Off,_Len) ->
+open(FileName, Off, Len, Options) ->
+    {ok, Mem} = open_nif(FileName, Off, Len, Options),
+    {ok, #file_descriptor{ module=?MODULE, data=Mem }}.
+
+open_nif(_,_,_,_) ->
+     {ok, <<>>}.
+
+close(#file_descriptor{ module=?MODULE, data=Mem }) ->
+    close_nif(Mem).
+
+close_nif(_) ->
+    ok.
+
+pread(#file_descriptor{ module=?MODULE, data=Mem }, Off, Len) ->
+    pread_nif(Mem, Off, Len).
+
+pread_nif(_,_,_) ->
     {ok, <<>>}.
 
-pwrite(_File,_Off,_Data) ->
+pwrite(#file_descriptor{ module=?MODULE, data=Mem }, Off, Data) ->
+    pwrite_nif(Mem, Off, Data).
+
+pwrite_nif(_,_,_) ->
     ok.
 
 
@@ -51,10 +65,21 @@ simple_test() ->
     ok = file:write(File, <<"abcd">>),
     ok = file:close(File),
 
-    {ok, MFile} = emmap:open("test.data", 0, 4, [direct]),
-    {ok, <<"cd">>} = emmap:pread(MFile, 2, 2),
-    {error, eacces} = emmap:pwrite(MFile, 2, <<"xx">>),
-    ok = emmap:close(MFile).
+    %% with direct+shared, the contents of a binary may change
+    {ok, MFile} = emmap:open("test.data", 0, 4, [direct, shared]),
+    {ok, Mem} = file:pread(MFile, 2, 2),
+    <<"cd">> = Mem,
+    {error, eacces} = file:pwrite(MFile, 2, <<"xx">>),
+
+    {ok, MFile2} = emmap:open("test.data", 0, 4, [read, write, shared]),
+    ok = file:pwrite(MFile2, 2, <<"xx">>),
+    {ok, <<"xx">>} = file:pread(MFile, 2, 2),
+
+    %% Woot!
+    <<"xx">> = Mem,
+
+    file:close(MFile),
+    file:close(MFile2) .
 
 
 -endif.

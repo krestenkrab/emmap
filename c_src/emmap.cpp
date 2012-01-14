@@ -68,10 +68,10 @@ extern "C" {
 
     static ErlNifFunc nif_funcs[] =
     {
-        {"open",              4, emmap_open},
-        {"close",             1, emmap_close},
-        {"pread",             3, emmap_pread},
-        {"pwrite",            3, emmap_pwrite},
+        {"open_nif",              4, emmap_open},
+        {"close_nif",             1, emmap_close},
+        {"pread_nif",             3, emmap_pread},
+        {"pwrite_nif",            3, emmap_pwrite},
     };
 
     ERL_NIF_INIT(emmap, nif_funcs, &on_load, NULL, NULL, NULL);
