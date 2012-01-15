@@ -1,6 +1,6 @@
 -module(emmap).
 
--export([open/4, close/1, pread/3, pwrite/3, read/2, position/2]).
+-export([open/2, open/4, close/1, pread/3, pwrite/3, read/2, position/2]).
 -on_load(init/0).
 
 -ifdef(TEST).
@@ -33,6 +33,14 @@ init() ->
     end,
     erlang:load_nif(SoName, 0).
 
+
+open(FileName, Options) ->
+    case file:read_file_info(FileName) of
+        {ok, FileInfo} ->
+            open(FileName, 0, FileInfo#file_info.size, Options);
+        Error ->
+            Error
+    end.
 
 -spec open(File::string(),
           Offset::pos_integer(),
