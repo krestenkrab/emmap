@@ -78,6 +78,7 @@ static ERL_NIF_TERM ATOM_EOF;
 
 static ERL_NIF_TERM emmap_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM emmap_read(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM emmap_read_line(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM emmap_close(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM emmap_pread(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM emmap_pwrite(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -93,6 +94,7 @@ extern "C" {
         {"pwrite_nif",            3, emmap_pwrite},
         {"position_nif",          3, emmap_position},
         {"read_nif",              2, emmap_read},
+        {"read_line_nif",         1, emmap_read_line},
     };
 
     ERL_NIF_INIT(emmap, nif_funcs, &on_load, NULL, NULL, NULL);
@@ -316,9 +318,12 @@ static ERL_NIF_TERM emmap_pread(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
       && enif_get_ulong(env, argv[2], &bytes)
       && pos >= 0
       && bytes >= 0
-      && (pos + bytes) <= handle->len
+      && pos <= handle->len
       )
     {
+      // Adjust bytes to behave like original file:pread/3
+      if (pos + bytes > handle->len) bytes = handle->len - pos;
+
       ErlNifBinary bin;
 
       if ((handle->prot & PROT_READ) == 0) {
@@ -432,6 +437,85 @@ static ERL_NIF_TERM emmap_read(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
       }
 
       memcpy(bin.data, (void*) (((char*)handle->mem) + start), size);
+
+      ERL_NIF_TERM res = enif_make_binary(env, &bin);
+      return enif_make_tuple2(env, ATOM_OK, res);
+    }
+
+  } else {
+    return enif_make_badarg(env);
+  }
+}
+
+static ERL_NIF_TERM emmap_read_line(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+  mhandle *handle;
+
+  if (enif_get_resource(env, argv[0], MMAP_RESOURCE, (void**)&handle)) {
+
+    RW_LOCK;
+
+    if (handle->position == handle->len) {
+      RW_UNLOCK;
+      return ATOM_EOF;
+    }
+
+    long start = handle->position;
+    char *current = ((char*)handle->mem) + handle->position;
+    long linelen = 0; // Length of line without trailing \n
+    long no_crlf_len = 0;
+    bool have_cr = false;
+    bool got_eof = false;
+
+    // Read buffer until \n or EOF is reached
+    while (*current != '\n') {
+      handle->position ++;
+      current ++;
+      if (handle->position == handle->len) {
+        got_eof = true;
+        break;
+      }
+    }
+    // Step to next byte if EOF is not reached
+    if (not got_eof) {
+      handle->position ++;
+    }
+
+    no_crlf_len = linelen = handle->position - start;
+
+    if (not got_eof) {
+      // Found LF -- exclude it from line
+      no_crlf_len --;
+      // If line length before \n is non-zero check if we have \r before \n
+      if ((no_crlf_len > 0) && (*(current - 1) == '\r')) {
+        have_cr = true;
+        no_crlf_len --;
+      }
+    }
+
+    RW_UNLOCK;
+
+    // We must not include CR before LF in result, so use direct only without CR
+    if ((handle->direct) && (not have_cr)) {
+
+      // Include trailing LF if we have it
+      ERL_NIF_TERM res = enif_make_resource_binary
+        (env, handle, (void*) (((char*)handle->mem) + start), linelen);
+
+      return enif_make_tuple2(env, ATOM_OK, res);
+
+    } else {
+      if (not got_eof) linelen = no_crlf_len + 1;
+
+      ErlNifBinary bin;
+      // When it is non-direct, we have to allocate the binary
+      if (!enif_alloc_binary((size_t) linelen, &bin)) {
+        return make_error_tuple(env, ENOMEM);
+      }
+
+      memcpy(bin.data, (void*) (((char*)handle->mem) + start), no_crlf_len);
+      // Set trailing \n if needed
+      if (not got_eof) *(((char*)bin.data) + no_crlf_len) = '\n';
 
       ERL_NIF_TERM res = enif_make_binary(env, &bin);
       return enif_make_tuple2(env, ATOM_OK, res);
