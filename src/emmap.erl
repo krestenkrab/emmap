@@ -101,6 +101,9 @@ pwrite_nif(_,_,_) ->
 position(#file_descriptor{ module=?MODULE, data=Mem}, At)
   when is_integer(At) ->
     position_nif(Mem, bof, At);
+position(#file_descriptor{ module=?MODULE, data=Mem}, From)
+  when From == 'bof'; From == 'cur'; From == 'eof' ->
+    position_nif(Mem, From, 0);
 position(#file_descriptor{ module=?MODULE, data=Mem}, {From, Off})
   when From == 'bof'; From == 'cur'; From == 'eof' ->
     position_nif(Mem, From, Off).
