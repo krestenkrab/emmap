@@ -1,6 +1,6 @@
 -module(emmap).
 
--export([open/2, open/4, close/1, pread/3, pwrite/3, read/2, position/2]).
+-export([open/2, open/4, close/1, pread/3, pwrite/3, read/2, read_line/1, position/2]).
 -on_load(init/0).
 
 -ifdef(TEST).
@@ -83,6 +83,16 @@ read(#file_descriptor{ module=?MODULE, data=Mem }, Len) ->
     read_nif(Mem, Len).
 
 read_nif(_,_) ->
+    {ok, <<>>}.
+
+
+-spec read_line(File::mmap_file()) ->
+                   {ok, binary()} | {error, term()} | eof.
+
+read_line(#file_descriptor{ module=?MODULE, data=Mem }) ->
+    read_line_nif(Mem).
+
+read_line_nif(_) ->
     {ok, <<>>}.
 
 
