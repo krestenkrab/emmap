@@ -9,6 +9,11 @@
 
 static ErlNifResourceType* MMAP_RESOURCE;
 
+#ifndef MAP_NOCACHE
+/* No MAP_NOCACHE on Linux - just bypass this option */
+#define MAP_NOCACHE (0)
+#endif
+
 typedef struct
 {
   size_t position;
