@@ -316,9 +316,12 @@ static ERL_NIF_TERM emmap_pread(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
       && enif_get_ulong(env, argv[2], &bytes)
       && pos >= 0
       && bytes >= 0
-      && (pos + bytes) <= handle->len
+      && pos <= handle->len
       )
     {
+      // Adjust bytes to behave like original file:pread/3
+      if (pos + bytes > handle->len) bytes = handle->len - pos;
+
       ErlNifBinary bin;
 
       if ((handle->prot & PROT_READ) == 0) {
