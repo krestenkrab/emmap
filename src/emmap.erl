@@ -1,6 +1,6 @@
 -module(emmap).
 
--export([open/2, open/4, close/1, pread/3, pwrite/3, read/2, position/2]).
+-export([open/2, open/4, close/1, pread/3, pwrite/3, read/2, read_line/1, position/2]).
 -on_load(init/0).
 
 -ifdef(TEST).
@@ -86,6 +86,16 @@ read_nif(_,_) ->
     {ok, <<>>}.
 
 
+-spec read_line(File::mmap_file()) ->
+                   {ok, binary()} | {error, term()} | eof.
+
+read_line(#file_descriptor{ module=?MODULE, data=Mem }) ->
+    read_line_nif(Mem).
+
+read_line_nif(_) ->
+    {ok, <<>>}.
+
+
 -spec pwrite(File::mmap_file(), Position::pos_integer(), Data::binary()) ->
                     ok | {error, term()}.
 
@@ -101,6 +111,9 @@ pwrite_nif(_,_,_) ->
 position(#file_descriptor{ module=?MODULE, data=Mem}, At)
   when is_integer(At) ->
     position_nif(Mem, bof, At);
+position(#file_descriptor{ module=?MODULE, data=Mem}, From)
+  when From == 'bof'; From == 'cur'; From == 'eof' ->
+    position_nif(Mem, From, 0);
 position(#file_descriptor{ module=?MODULE, data=Mem}, {From, Off})
   when From == 'bof'; From == 'cur'; From == 'eof' ->
     position_nif(Mem, From, Off).
