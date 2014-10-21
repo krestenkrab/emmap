@@ -14,7 +14,7 @@
   | direct
   | lock | nolock
   | private | shared
-  | nocache
+  | nocache | auto_unlink
   .
 
 -type mmap_file() :: #file_descriptor{}.
