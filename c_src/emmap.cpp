@@ -23,6 +23,8 @@ typedef struct
   ErlNifRWLock* rwlock;
   void* mem;
   size_t len;
+  bool auto_unlink;
+  char path[1024];
 } mhandle;
 
 static int on_load(ErlNifEnv*, void**, ERL_NIF_TERM);
@@ -71,6 +73,7 @@ static ERL_NIF_TERM ATOM_ANON;
 static ERL_NIF_TERM ATOM_FILE;
 static ERL_NIF_TERM ATOM_FIXED;
 static ERL_NIF_TERM ATOM_NOCACHE;
+static ERL_NIF_TERM ATOM_AUTO_UNLINK;
 
 static ERL_NIF_TERM ATOM_BOF;
 static ERL_NIF_TERM ATOM_CUR;
@@ -120,6 +123,7 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_FILE = enif_make_atom(env, "file");
     ATOM_FIXED = enif_make_atom(env, "fixed");
     ATOM_NOCACHE = enif_make_atom(env, "nocache");
+    ATOM_AUTO_UNLINK = enif_make_atom(env, "auto_unlink");
 
     ATOM_BOF = enif_make_atom(env, "bof");
     ATOM_CUR = enif_make_atom(env, "cur");
@@ -164,12 +168,14 @@ static ERL_NIF_TERM make_error_tuple(ErlNifEnv* env, int err) {
 }
 
 
-int decode_flags(ErlNifEnv* env, ERL_NIF_TERM list, int *prot, int *flags, bool *direct, bool *lock)
+int decode_flags(ErlNifEnv* env, ERL_NIF_TERM list, int *prot, int *flags, bool *direct, bool *lock,
+                 bool *auto_unlink)
 {
   bool l = true;
   bool d = false;
   int f = MAP_FILE;
   int p = 0;
+  *auto_unlink = false;
   ERL_NIF_TERM head;
   while (enif_get_list_cell(env, list, &head, &list)) {
 
@@ -198,7 +204,8 @@ int decode_flags(ErlNifEnv* env, ERL_NIF_TERM list, int *prot, int *flags, bool 
 //    f |= MAP_FIXED;
     } else if (enif_is_identical(head, ATOM_NOCACHE)) {
       f |= MAP_NOCACHE;
-
+    } else if(enif_is_identical(head, ATOM_AUTO_UNLINK)) {
+      *auto_unlink = true;
     } else {
       return 0;
     }
@@ -228,26 +235,27 @@ static ERL_NIF_TERM emmap_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
 {
   int flags;
   int prot;
-  bool direct, lock;
+  bool direct, lock, auto_unlink;
   unsigned long int len;
   unsigned long int offset;
-  char buf[1024];
 
 #ifndef NDEBUG
   if ( sizeof(long int) != sizeof(size_t) ) {
     abort();
   }
 #endif
+  mhandle* handle = (mhandle*)enif_alloc_resource_compat(env, MMAP_RESOURCE,
+                                                           sizeof(mhandle));
 
   if (argc == 4
-      && enif_get_string(env, argv[0], buf, 1024, ERL_NIF_LATIN1)
+      && enif_get_string(env, argv[0], handle->path, 1024, ERL_NIF_LATIN1)
       && enif_get_ulong(env, argv[1], &offset)
       && enif_get_ulong(env, argv[2], &len)
-      && decode_flags(env, argv[3], &prot, &flags, &direct, &lock)) {
+      && decode_flags(env, argv[3], &prot, &flags, &direct, &lock, &auto_unlink)) {
 
     int mode = (((prot & PROT_WRITE)==PROT_WRITE) ? O_RDWR : O_RDONLY);
 
-    int fd = open(buf, mode);
+    int fd = open(handle->path, mode);
     if (fd < 0) {
       return make_error_tuple(env, errno);
     }
@@ -259,8 +267,6 @@ static ERL_NIF_TERM emmap_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
 
     close(fd);
 
-    mhandle* handle = (mhandle*)enif_alloc_resource_compat(env, MMAP_RESOURCE,
-                                                           sizeof(mhandle));
 
     if (lock)
       handle->rwlock = enif_rwlock_create((char*)"mmap");
@@ -273,6 +279,7 @@ static ERL_NIF_TERM emmap_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv
     handle->closed = false;
     handle->direct = direct;
     handle->position = 0;
+    handle->auto_unlink = auto_unlink;
 
     ERL_NIF_TERM resource = enif_make_resource(env, handle);
     enif_release_resource_compat(env, handle);
@@ -295,6 +302,9 @@ static ERL_NIF_TERM emmap_close(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
       RW_LOCK;
       res = emmap_unmap(handle, false);
       RW_UNLOCK;
+
+      if(handle->auto_unlink && unlink(handle->path) != 0)
+        return make_error_tuple(env, errno);
 
       if (res == 0) {
         return ATOM_OK;

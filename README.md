@@ -18,6 +18,7 @@ The open options is a list containing zero or more of these:
 - `private`, `shared`: The file is opened with copy-on-write semantics, or sharing memory with the underlying file.
 - `direct`: read/pread operations do not copy memory, but rather use "resource binaries" that can change content if the underlying data is changed.  This is the most performant, but also has other implications.
 - `lock`, `nolock` do (or do not) use a semaphore to control state changes internally in the NIF library.  
+- `auto_unlink` automatically deletes the mapped file after the mapped data was garbage collected. This can be used when the mapped file is a file-based shared-memory area (e.g. `/run/shm/...`) and is mapped in `direct` mode to free the memory after the data was gc'd.
 
 From this point, `Mem` can be used with the `file` operations
 
