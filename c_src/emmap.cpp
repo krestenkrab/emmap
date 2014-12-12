@@ -544,6 +544,8 @@ static ERL_NIF_TERM emmap_position(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
         position = handle->position + relpos;
       } else if (argv[1] == ATOM_EOF) {
         position = handle->len - relpos;
+      } else {
+        position = -1;
       }
 
       if (position < 0L || ((unsigned long)position) > handle->len) {
